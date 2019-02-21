@@ -1,3 +1,11 @@
-#!/bin/sh
+#!/usr/bin/env bash
 
-apt-get install dnsmasq
+set -e
+
+mkdir -p "$1/bin/"
+cp "bin/dnsmasq" "$1/bin/dnsmasq"
+echo "-----> dnsmasq-buildpack: Installed dnsmasq to app/bin"
+cp bin/start-dnsmasq "$1/bin/"
+echo '-----> dnsmasq-buildpack: Added start-dnsmasq to app/bin'
+
+exit 0
