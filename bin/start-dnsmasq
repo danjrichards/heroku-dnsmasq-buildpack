@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+
+psmgr=/tmp/dnsmasq-buildpack-wait
+rm -f $psmgr
+mkfifo $psmgr
+
+# Evaluate config to get $PORT
+#erb config/nginx.conf.erb > config/nginx.conf
+
+n=1
+while getopts :f option ${@:1:2}
+do
+  case "${option}"
+  in
+    f) FORCE=$OPTIND; n=$((n+1));;
+  esac
+done
+
+# Initialize log directory.
+mkdir -p logs/dnsmasq
+touch logs/dnsmasq.log
+echo 'buildpack=dnsmasq at=logs-initialized'
+
+# Start log redirection.
+(
+  # Redirect dnsmasq logs to stdout
+  tail -qF -n 0 logs/dnsmasq/*.log
+  echo 'logs' >$psmgr
+) &
+
+# Start App Server
+(
+  # Take the command passed to this bin and start it.
+  # E.g. bin/start-dnsmasq bundle exec unicorn -c config/unicorn.rb
+  COMMAND=${@:$n}
+  echo "buildpack=dnsmasq at=start-app cmd=$COMMAND"
+  $COMMAND
+  echo 'app' >$psmgr
+) &
+
+if [[ -z "$FORCE" ]]
+then
+  FILE="/tmp/app-initialized"
+
+  # We block on app-initialized so that when dnsmasq binds to $PORT
+  # our app is ready for traffic.
+  while [[ ! -f "$FILE" ]]
+  do
+    echo 'buildpack=dnsmasq at=app-initialization'
+    sleep 1
+  done
+  echo 'buildpack=dnsmasq at=app-initialized'
+fi
+
+# Start dnsmasq
+(
+  # We expect dnsmasq to run in foreground.
+  # We also expect a socket to be at /tmp/dnsmasq.socket.
+  echo 'buildpack=dnsmasq at=dnsmasq-start'
+  bin/dnsmasq dnsmasq -S /onprem.org/10.10.10.10
+  echo 'dnsmasq' >$psmgr
+) &
+
+# This read will block the process waiting on a msg to be put into the fifo.
+# If any of the processes defined above should exit,
+# a msg will be put into the fifo causing the read operation
+# to un-block. The process putting the msg into the fifo
+# will use it's process name as a msg so that we can print the offending
+# process to stdout.
+read exit_process <$psmgr
+echo "buildpack=dnsmasq at=exit process=$exit_process"
+exit 1
+
